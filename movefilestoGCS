@@ -1,0 +1,95 @@
+/**
+ * Main function to initiate the file transfer from Google Drive to GCS,
+ * including all subfolders.
+ */
+function moveAllFilesToGCS() {
+  const bucketName = '*********Your bucket name, no gs://***************';
+  const rootFolderId = '**************Top level Folder ID********************'; // My root Google Drive folder ID
+
+  const rootFolder = DriveApp.getFolderById(rootFolderId);
+
+  if (!rootFolder) {
+    console.error(`Root folder not found with ID: ${rootFolderId}`);
+    return;
+  }
+
+  console.log(`Starting file transfer from root folder: ${rootFolder.getName()}`);
+  // Start the recursive processing from the root folder, with an empty path initially
+  processFolderRecursive(rootFolder, bucketName, '');
+  console.log('File transfer process completed.');
+}
+
+/**
+ * Recursive folder search
+ * @param {GoogleAppsScript.Drive.Folder} folder The current Google Drive folder to process.
+ * @param {string} bucketName The name of the Google Cloud Storage bucket.
+ * @param {string} currentGCSPath The path within the GCS bucket for the current folder's contents.
+ */
+function processFolderRecursive(folder, bucketName, currentGCSPath) {
+  console.log(`Processing folder: ${currentGCSPath}${folder.getName()}`);
+
+  // 1. Process and upload files in the current folder
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    const blob = file.getBlob();
+    const fileName = file.getName();
+    
+    // Construct the full object name including the GCS folder path
+    const gcsObjectName = currentGCSPath + fileName;
+
+    const result = uploadFileToGCS_(blob, bucketName, gcsObjectName);
+
+    if (result) {
+      console.log(`Uploaded: ${gcsObjectName}`);
+    } else {
+      console.error(`Failed to upload: ${gcsObjectName}`);
+    }
+  }
+
+  // 2. Recursively process subfolders
+  const subfolders = folder.getFolders();
+  while (subfolders.hasNext()) {
+    const subfolder = subfolders.next();
+    // Append the current folder's name to the GCS path for subfolders
+    const newGCSPath = currentGCSPath + folder.getName() + '/';
+    processFolderRecursive(subfolder, bucketName, newGCSPath);
+  }
+}
+
+/**
+ * Uploads a Blob to a Google Cloud Storage bucket.
+ *
+ * @param {Blob} blob - The Blob of the file to upload.
+ * @param {string} bucketName - The GCS bucket name.
+ * @param {string} objectName - The destination file name (including path) in the bucket.
+ * @return {Object|null} - The response object from GCS, or null on error.
+ */
+function uploadFileToGCS_(blob, bucketName, objectName) {
+  const bytes = blob.getBytes();
+  // Ensure the URL uses storage.googleapis.com, not www.googleapis.com for uploads
+  const url = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
+
+  try {
+    const response = UrlFetchApp.fetch(url, {
+      method: 'POST',
+      contentType: blob.getContentType(),
+      payload: bytes,
+      headers: {
+        Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+      },
+      muteHttpExceptions: true
+    });
+
+    const code = response.getResponseCode();
+    if (code >= 200 && code < 300) {
+      return JSON.parse(response.getContentText());
+    } else {
+      console.error(`Upload error ${code}: ${response.getContentText()}`);
+      return null;
+    }
+  } catch (e) {
+    console.error('Upload failed:', e);
+    return null;
+  }
+}
